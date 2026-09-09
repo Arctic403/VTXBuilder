@@ -1,6 +1,7 @@
 {
   "name": "Vortex3D VTXBuilder toolchain",
   "policy": "locked",
+  "builder": "VTXBuilder",
   "java": "17",
   "gradle": "8.9",
   "android": {
@@ -8,10 +9,10 @@
     "verify_cmake": true,
     "verify_vulkan": true
   },
-  "validation": {
-    "require_build_manifest": true,
-    "require_source_sha_match": true,
-    "emit_provenance": true
-  },
+  "validation": [
+    "source_sha_match",
+    "build_manifest_match",
+    "toolchain_match"
+  ],
   "note": "CI validates installed tool versions and build metadata before compiling."
 }
