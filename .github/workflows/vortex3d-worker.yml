@@ -115,6 +115,23 @@ jobs:
         timeout-minutes: 80
         run: bash worker/scripts/vortex3d-full.sh source
 
+      - name: Create Vortex3D artifact manifest
+        if: ${{ success() && env.PUBLISH == 'true' }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/vortex-output"
+          cat > "$RUNNER_TEMP/vortex-output/build-manifest.json" <<EOF
+          {
+            "source_sha": "${SOURCE_SHA}",
+            "builder": "Arctic403/VTXBuilder",
+            "run_id": "${GITHUB_RUN_ID}",
+            "client_id": "${CLIENT_ID}",
+            "mode": "full",
+            "verification": "passed",
+            "artifact_policy": "vortex3d-prerelease-only"
+          }
+          EOF
+
       - name: Return successful build to private Vortex3D prerelease
         if: ${{ success() && env.PUBLISH == 'true' }}
         env:
@@ -128,7 +145,7 @@ jobs:
             --target "$SOURCE_SHA" \
             --prerelease \
             --title "Vortex3D worker build ${SHORT_SHA}" \
-            --notes "Vortex3D full verification build produced by public Arctic403/VTXBuilder run ${GITHUB_RUN_ID}. Source ${SOURCE_SHA}. Mode full. Client ${CLIENT_ID}. No public Actions artifact was uploaded."
+            --notes "Vortex3D full verification build produced by public Arctic403/VTXBuilder run ${GITHUB_RUN_ID}. Source ${SOURCE_SHA}. Mode full. Client ${CLIENT_ID}. Artifacts are published only through the private Vortex3D prerelease channel."
 
       - name: Return private failure diagnostics
         if: ${{ failure() && env.PUBLISH == 'true' }}

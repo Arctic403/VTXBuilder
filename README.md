@@ -31,7 +31,7 @@ VTXBuilder (public Actions run)
   |
   | private prerelease tagged with source SHA + client id
   v
-Vortex3D (private releases)
+Vortex3D (private prerelease releaseeases)
   |
   | Editor polls by client id and downloads result
   v
@@ -40,7 +40,7 @@ Local device
 
 The worker is **manual/local-controller triggered only**. There is no Vortex3D `repository_dispatch` workflow and no five-minute watcher anymore.
 
-VTXBuilder intentionally uses **no `actions/upload-artifact`** for private Vortex3D worker builds. Successful APKs, verification data, benchmark outputs, and captured detailed build logs are returned only to the private Vortex3D repository. Public workflow logs remain public, so private build output is redirected where practical and detailed diagnostics are returned through private releases.
+VTXBuilder intentionally uses **no `actions/upload-artifact`** for private Vortex3D worker builds. Successful APKs, verification data, benchmark outputs, and captured detailed build logs are returned only to the private Vortex3D repository. Public workflow logs remain public, so private build output is redirected where practical and detailed diagnostics are returned through private prerelease releaseeases.
 
 ### Required credentials
 
