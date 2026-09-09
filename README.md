@@ -2,18 +2,21 @@
 
 Public build-worker infrastructure for VTX/Vortex projects.
 
-## Vortex3D private-worker model
+## Vortex3D local-controller model
 
-Vortex3D is private. VTXBuilder is public and owns the actual GitHub Actions runner used for verification, Android builds, and manual benchmarks.
+Vortex3D is private. VTXBuilder is public and owns the GitHub Actions runner used for verification, Android builds, and benchmarks.
 
-The private Vortex3D repository sends only an exact source commit SHA and build mode to VTXBuilder using `repository_dispatch`. VTXBuilder then checks out that exact private commit with a narrowly scoped repository secret, performs the build on the VTXBuilder runner, and returns completed outputs to the private Vortex3D repository as prerelease assets.
+Vortex3D itself intentionally has **zero GitHub Actions workflows**. Pushing Vortex3D source does not start a build. The supported controller is the local/browser `Arctic403/Editor` workspace:
 
 ```text
-Vortex3D (private)
-  push/main
-     |
-     | repository_dispatch: source SHA only
-     v
+Editor local workspace
+  |
+  | one private Vortex3D source commit
+  v
+Vortex3D (private source only, zero Actions)
+  |
+  | Editor workflow_dispatches exact source SHA + client id
+  v
 VTXBuilder (public Actions run)
   checkout exact private SHA
   repository policy + validation closure
@@ -22,45 +25,46 @@ VTXBuilder (public Actions run)
   VSS
   Android ARM32 + ARM64 native shells
   split + universal debug APKs
+  APK verification
   performance smoke
   verification bundle
-     |
-     | private GitHub prerelease
-     v
+  |
+  | private prerelease tagged with source SHA + client id
+  v
 Vortex3D (private releases)
-  APKs + hashes + verification bundle
+  |
+  | Editor polls by client id and downloads result
+  v
+Local device
 ```
 
-VTXBuilder intentionally uses **no `actions/upload-artifact`** for private Vortex3D worker builds. Successful APKs, verification data, benchmark outputs, and captured detailed build logs are returned only to the private repository. Public workflow logs are kept to stage-level output where practical.
+The worker is **manual/local-controller triggered only**. There is no Vortex3D `repository_dispatch` workflow and no five-minute watcher anymore.
 
-### Required repository secrets
+VTXBuilder intentionally uses **no `actions/upload-artifact`** for private Vortex3D worker builds. Successful APKs, verification data, benchmark outputs, and captured detailed build logs are returned only to the private Vortex3D repository. Public workflow logs remain public, so private build output is redirected where practical and detailed diagnostics are returned through private releases.
 
-`Arctic403/VTXBuilder` needs:
+### Required credentials
 
-- `VORTEX_PRIVATE_TOKEN` — fine-grained token restricted to `Arctic403/Vortex3d`, with repository Contents read/write. It is used to read the exact private source commit and create prereleases/assets back in Vortex3D.
+`Arctic403/VTXBuilder` needs one repository secret:
 
-`Arctic403/Vortex3d` needs:
+- `VORTEX_PRIVATE_TOKEN` — fine-grained token restricted to `Arctic403/Vortex3d`, with repository Contents read/write. It reads the exact private source commit and creates private prereleases/assets back in Vortex3D.
 
-- `VTXBUILDER_DISPATCH_TOKEN` — fine-grained token restricted to `Arctic403/VTXBuilder`, with repository Contents read/write so the private repo can send `repository_dispatch` events.
+The local Editor token needs:
 
-Do not use `secrets: inherit` across this boundary.
+- `Arctic403/Vortex3d`: Contents read/write, so the Editor can push the current local source snapshot and read the private returned release/assets.
+- `Arctic403/VTXBuilder`: Actions read/write, so the Editor can dispatch `.github/workflows/vortex3d-worker.yml`.
+
+Vortex3D no longer needs `VTXBUILDER_DISPATCH_TOKEN` because it never dispatches or runs an Action.
 
 ### Worker workflow
 
-`.github/workflows/vortex3d-worker.yml` supports:
+`.github/workflows/vortex3d-worker.yml` supports only `workflow_dispatch` and accepts:
 
-- `repository_dispatch` from private Vortex3D.
-- Manual builds for an exact Vortex3D branch/tag/SHA.
-- A five-minute backup watcher that builds `main` only when the corresponding private worker prerelease is missing.
-- `full` mode for the complete Vortex3D verification/APK pipeline.
-- `benchmark` mode for scaled performance runs returned to the private repository.
+- `source_ref` — exact private Vortex3D branch/tag/SHA to resolve and build.
+- `client_id` — optional Editor/local correlation id copied into private success/failure release notes.
+- `mode` — `full` or `benchmark`.
+- `scale` — benchmark scale when relevant.
+- `publish` — return outputs to private Vortex3D releases.
 
-## Reusable workflows
-
-The older reusable workflows remain available as lower-level building blocks, but the canonical private Vortex3D path is the public worker above:
-
-- `vortex3d-ci.yml`
-- `vortex3d-benchmarks.yml`
-- `repo-cleanup.yml`
+`full` mode performs the complete Vortex3D verification/APK pipeline. VSS builds the full native test set before running the verifier so the verifier's declared probe list and the worker cannot drift apart.
 
 VTXBuilder contains build orchestration only. Vortex3D product source is checked out ephemerally onto GitHub-hosted workers and is never committed or uploaded as a public VTXBuilder artifact.
