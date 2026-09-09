@@ -1,66 +1,66 @@
 # VTXBuilder
 
-Public reusable GitHub Actions workflows for VTX/Vortex projects.
+Public build-worker infrastructure for VTX/Vortex projects.
 
-VTXBuilder contains build orchestration only. Product source, assets, shaders, project files, validation data, and build artifacts remain in the calling repository.
+## Vortex3D private-worker model
 
-## Vortex3D
+Vortex3D is private. VTXBuilder is public and owns the actual GitHub Actions runner used for verification, Android builds, and manual benchmarks.
 
-Private/public Vortex3D repositories can call the full verification pipeline with a tiny workflow:
+The private Vortex3D repository sends only an exact source commit SHA and build mode to VTXBuilder using `repository_dispatch`. VTXBuilder then checks out that exact private commit with a narrowly scoped repository secret, performs the build on the VTXBuilder runner, and returns completed outputs to the private Vortex3D repository as prerelease assets.
 
-```yaml
-name: Core CI
-
-on:
-  push:
-    branches: [main]
-  pull_request:
-
-permissions:
-  contents: read
-
-jobs:
-  verify:
-    uses: Arctic403/VTXBuilder/.github/workflows/vortex3d-ci.yml@main
+```text
+Vortex3D (private)
+  push/main
+     |
+     | repository_dispatch: source SHA only
+     v
+VTXBuilder (public Actions run)
+  checkout exact private SHA
+  repository policy + validation closure
+  GCC + Clang tests
+  ASan/UBSan + clang-tidy
+  VSS
+  Android ARM32 + ARM64 native shells
+  split + universal debug APKs
+  performance smoke
+  verification bundle
+     |
+     | private GitHub prerelease
+     v
+Vortex3D (private releases)
+  APKs + hashes + verification bundle
 ```
 
-Manual benchmarks:
+VTXBuilder intentionally uses **no `actions/upload-artifact`** for private Vortex3D worker builds. Successful APKs, verification data, benchmark outputs, and captured detailed build logs are returned only to the private repository. Public workflow logs are kept to stage-level output where practical.
 
-```yaml
-jobs:
-  benchmark:
-    uses: Arctic403/VTXBuilder/.github/workflows/vortex3d-benchmarks.yml@main
-    with:
-      scale: ${{ inputs.scale }}
-```
+### Required repository secrets
 
-Repository cleanup:
+`Arctic403/VTXBuilder` needs:
 
-```yaml
-permissions:
-  contents: write
+- `VORTEX_PRIVATE_TOKEN` — fine-grained token restricted to `Arctic403/Vortex3d`, with repository Contents read/write. It is used to read the exact private source commit and create prereleases/assets back in Vortex3D.
 
-jobs:
-  cleanup:
-    uses: Arctic403/VTXBuilder/.github/workflows/repo-cleanup.yml@main
-    with:
-      paths: |
-        build-p0
-        android/app/.cxx
-```
+`Arctic403/Vortex3d` needs:
 
-## Security model
+- `VTXBUILDER_DISPATCH_TOKEN` — fine-grained token restricted to `Arctic403/VTXBuilder`, with repository Contents read/write so the private repo can send `repository_dispatch` events.
 
-Reusable workflows execute in the caller repository context. `actions/checkout` therefore checks out the caller's source tree, and uploaded artifacts belong to the caller's workflow run. VTXBuilder does not clone, mirror, upload, or publish the caller repository.
+Do not use `secrets: inherit` across this boundary.
 
-No workflow in this repository requests arbitrary repository secrets. The caller controls the `GITHUB_TOKEN` permission ceiling. Vortex3D's normal verification caller uses read-only contents access; only the cleanup caller requests `contents: write` because it may remove accidentally tracked generated files.
+### Worker workflow
 
-For repositories not controlled by Arctic403, pin VTXBuilder to a full commit SHA instead of `@main`.
+`.github/workflows/vortex3d-worker.yml` supports:
 
-## Workflows
+- `repository_dispatch` from private Vortex3D.
+- Manual builds for an exact Vortex3D branch/tag/SHA.
+- A five-minute backup watcher that builds `main` only when the corresponding private worker prerelease is missing.
+- `full` mode for the complete Vortex3D verification/APK pipeline.
+- `benchmark` mode for scaled performance runs returned to the private repository.
 
-- `vortex3d-ci.yml` — repository policy, portability, JNI validation closure, GCC/Clang, ASan/UBSan, clang-tidy, VSS, Android ARM32/ARM64 native shell, debug APKs, benchmark smoke, verification diagnostics bundle, final gate.
-- `vortex3d-benchmarks.yml` — manual scaled performance benchmarks and artifacts.
-- `repo-cleanup.yml` — reusable removal of accidentally tracked generated build trees.
+## Reusable workflows
 
-VTXBuilder is intentionally public so build logic can be audited while product source can remain private.
+The older reusable workflows remain available as lower-level building blocks, but the canonical private Vortex3D path is the public worker above:
+
+- `vortex3d-ci.yml`
+- `vortex3d-benchmarks.yml`
+- `repo-cleanup.yml`
+
+VTXBuilder contains build orchestration only. Vortex3D product source is checked out ephemerally onto GitHub-hosted workers and is never committed or uploaded as a public VTXBuilder artifact.

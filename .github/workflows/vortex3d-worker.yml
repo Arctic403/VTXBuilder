@@ -1,0 +1,364 @@
+name: Vortex3D Private Build Worker
+
+on:
+  repository_dispatch:
+    types: [vortex3d-build]
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Vortex3D branch, tag, or commit to build
+        required: true
+        default: main
+        type: string
+      mode:
+        description: Worker mode
+        required: true
+        default: full
+        type: choice
+        options: [full, benchmark]
+      scale:
+        description: Benchmark scale when mode=benchmark
+        required: false
+        default: '10000'
+        type: choice
+        options: ['10000', '100000', '1000000']
+      publish:
+        description: Return completed outputs to private Vortex3D as a prerelease
+        required: true
+        default: true
+        type: boolean
+  schedule:
+    - cron: '*/5 * * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vortex3d-private-worker
+  cancel-in-progress: true
+
+jobs:
+  resolve-vortex-source:
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.resolve.outputs.should_build }}
+      source_sha: ${{ steps.resolve.outputs.source_sha }}
+      source_ref: ${{ steps.resolve.outputs.source_ref }}
+      publish: ${{ steps.resolve.outputs.publish }}
+      mode: ${{ steps.resolve.outputs.mode }}
+      scale: ${{ steps.resolve.outputs.scale }}
+    steps:
+      - name: Resolve exact private Vortex3D source
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.VORTEX_PRIVATE_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_REF: ${{ github.event.client_payload.source_sha }}
+          INPUT_REF: ${{ inputs.source_ref }}
+          DISPATCH_MODE: ${{ github.event.client_payload.mode }}
+          INPUT_MODE: ${{ inputs.mode }}
+          DISPATCH_SCALE: ${{ github.event.client_payload.scale }}
+          INPUT_SCALE: ${{ inputs.scale }}
+          DISPATCH_PUBLISH: ${{ github.event.client_payload.publish }}
+          INPUT_PUBLISH: ${{ inputs.publish }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${GH_TOKEN:-}" ]; then
+            if [ "$EVENT_NAME" = 'schedule' ]; then
+              echo 'VORTEX_PRIVATE_TOKEN is not configured yet; scheduled worker check skipped.'
+              echo 'should_build=false' >> "$GITHUB_OUTPUT"
+              echo 'source_sha=' >> "$GITHUB_OUTPUT"
+              echo 'source_ref=main' >> "$GITHUB_OUTPUT"
+              echo 'publish=true' >> "$GITHUB_OUTPUT"
+              echo 'mode=full' >> "$GITHUB_OUTPUT"
+              echo 'scale=10000' >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo 'VORTEX_PRIVATE_TOKEN is required to read/write private Arctic403/Vortex3d.' >&2
+            exit 1
+          fi
+
+          if [ "$EVENT_NAME" = 'repository_dispatch' ]; then
+            SOURCE_REF="${DISPATCH_REF:-main}"
+            MODE="${DISPATCH_MODE:-full}"
+            SCALE="${DISPATCH_SCALE:-10000}"
+            PUBLISH="${DISPATCH_PUBLISH:-true}"
+          elif [ "$EVENT_NAME" = 'workflow_dispatch' ]; then
+            SOURCE_REF="${INPUT_REF:-main}"
+            MODE="${INPUT_MODE:-full}"
+            SCALE="${INPUT_SCALE:-10000}"
+            PUBLISH="${INPUT_PUBLISH:-true}"
+          else
+            SOURCE_REF=main
+            MODE=full
+            SCALE=10000
+            PUBLISH=true
+          fi
+
+          case "$MODE" in
+            full|benchmark) ;;
+            *) echo "Unsupported worker mode: $MODE" >&2; exit 2 ;;
+          esac
+          case "$SCALE" in
+            10000|100000|1000000) ;;
+            *) echo "Unsupported benchmark scale: $SCALE" >&2; exit 2 ;;
+          esac
+
+          SOURCE_SHA="$(gh api "repos/Arctic403/Vortex3d/commits/${SOURCE_REF}" --jq '.sha')"
+          echo "source_ref=${SOURCE_REF}" >> "$GITHUB_OUTPUT"
+          echo "source_sha=${SOURCE_SHA}" >> "$GITHUB_OUTPUT"
+          echo "publish=${PUBLISH}" >> "$GITHUB_OUTPUT"
+          echo "mode=${MODE}" >> "$GITHUB_OUTPUT"
+          echo "scale=${SCALE}" >> "$GITHUB_OUTPUT"
+          echo "Resolved private Vortex3D ${SOURCE_REF} -> ${SOURCE_SHA} (${MODE})"
+
+          if [ "$EVENT_NAME" = 'workflow_dispatch' ] || [ "$MODE" = 'benchmark' ] || [ "$PUBLISH" != 'true' ]; then
+            echo 'should_build=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if gh api repos/Arctic403/Vortex3d/releases --paginate --jq '.[].body // ""' \
+              | grep -Fq "Source ${SOURCE_SHA}. Mode ${MODE}."; then
+            echo "Private Vortex3D ${SOURCE_SHA} already has a worker prerelease for ${MODE}; nothing to do."
+            echo 'should_build=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'should_build=true' >> "$GITHUB_OUTPUT"
+          fi
+
+  full-verification-build:
+    needs: resolve-vortex-source
+    if: ${{ needs.resolve-vortex-source.outputs.should_build == 'true' && needs.resolve-vortex-source.outputs.mode == 'full' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      SOURCE_SHA: ${{ needs.resolve-vortex-source.outputs.source_sha }}
+      PUBLISH: ${{ needs.resolve-vortex-source.outputs.publish }}
+    steps:
+      - name: Check out exact private Vortex3D commit
+        uses: actions/checkout@v4
+        with:
+          repository: Arctic403/Vortex3d
+          ref: ${{ env.SOURCE_SHA }}
+          token: ${{ secrets.VORTEX_PRIVATE_TOKEN }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Confirm isolated checkout
+        run: |
+          set -euo pipefail
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          test "$ACTUAL_SHA" = "$SOURCE_SHA"
+          test -f CMakeLists.txt
+          test -f android/app/build.gradle
+          printf 'Building private Vortex3D commit %s on public VTXBuilder worker\n' "$ACTUAL_SHA"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Install worker dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update >/dev/null
+          sudo apt-get install -y glslc >/dev/null
+          glslc --version
+          clang-tidy --version | head -n 1
+          test -f "$ANDROID_NDK_LATEST_HOME/build/cmake/android.toolchain.cmake"
+          mkdir -p "$RUNNER_TEMP/vortex-private-logs" "$RUNNER_TEMP/vortex-output"
+
+      - name: Repository policy
+        run: python3 scripts/check_repository_policy.py >"$RUNNER_TEMP/vortex-private-logs/repository-policy.log" 2>&1
+
+      - name: Portable core boundary
+        run: python3 scripts/check_core_portability.py >"$RUNNER_TEMP/vortex-private-logs/portable-boundary.log" 2>&1
+
+      - name: JNI validation closure
+        run: |
+          mkdir -p validation-artifacts
+          python3 scripts/check_validation_surface.py --out validation-artifacts/validation-surface.json >"$RUNNER_TEMP/vortex-private-logs/validation-coverage.log" 2>&1
+
+      - name: Linux GCC build and tests
+        env:
+          CXX: g++
+        run: |
+          {
+            cmake -S . -B build-gcc -DCMAKE_BUILD_TYPE=Debug -DVORTEX_BUILD_TESTS=ON -DVORTEX_WARNINGS_AS_ERRORS=ON
+            cmake --build build-gcc --config Debug --parallel
+            ctest --test-dir build-gcc --output-on-failure
+          } >"$RUNNER_TEMP/vortex-private-logs/linux-gcc.log" 2>&1
+
+      - name: Linux Clang build and tests
+        env:
+          CXX: clang++
+        run: |
+          {
+            cmake -S . -B build-clang -DCMAKE_BUILD_TYPE=Debug -DVORTEX_BUILD_TESTS=ON -DVORTEX_WARNINGS_AS_ERRORS=ON
+            cmake --build build-clang --config Debug --parallel
+            ctest --test-dir build-clang --output-on-failure
+          } >"$RUNNER_TEMP/vortex-private-logs/linux-clang.log" 2>&1
+
+      - name: ASan and UBSan
+        env:
+          CXX: clang++
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: |
+          {
+            cmake -S . -B build-sanitize -DCMAKE_BUILD_TYPE=Debug -DVORTEX_BUILD_TESTS=ON -DVORTEX_WARNINGS_AS_ERRORS=ON -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+            cmake --build build-sanitize --parallel
+            ctest --test-dir build-sanitize --output-on-failure
+          } >"$RUNNER_TEMP/vortex-private-logs/sanitizers.log" 2>&1
+
+      - name: Static analysis
+        env:
+          CXX: clang++
+        run: |
+          {
+            cmake -S . -B build-tidy -DCMAKE_BUILD_TYPE=Debug -DVORTEX_BUILD_TESTS=OFF -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+            mapfile -t SOURCES < <(find src -name '*.cpp' -print | sort)
+            clang-tidy "${SOURCES[@]}" -p build-tidy --quiet --warnings-as-errors='bugprone-*,performance-*,portability-*'
+          } >"$RUNNER_TEMP/vortex-private-logs/static-analysis.log" 2>&1
+
+      - name: Verification Snapshot System
+        env:
+          CXX: clang++
+        run: |
+          {
+            cmake -S . -B build-vss -DCMAKE_BUILD_TYPE=Debug -DVORTEX_BUILD_TESTS=ON -DVORTEX_WARNINGS_AS_ERRORS=ON
+            cmake --build build-vss --parallel --target vortex_architecture_v02_smoke vortex_document_mesh_integration_smoke vortex_project_format_v02_smoke vortex_evaluated_mesh_validation_smoke
+            python3 tools/vss/verify.py --build-dir build-vss --out vss-artifacts/vss.json --summary vss-artifacts/vss-summary.txt
+          } >"$RUNNER_TEMP/vortex-private-logs/vss.log" 2>&1
+
+      - name: Android ARM32 native shell
+        run: |
+          {
+            cmake -S android/app/src/main/cpp -B build-android-armeabi-v7a -DCMAKE_BUILD_TYPE=Debug -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_LATEST_HOME/build/cmake/android.toolchain.cmake" -DANDROID_ABI=armeabi-v7a -DANDROID_PLATFORM=android-26 -DVORTEX_BUILD_TESTS=OFF -DVORTEX_WARNINGS_AS_ERRORS=ON -DVORTEX_EXPECT_POINTER_BITS=32
+            cmake --build build-android-armeabi-v7a --target vortex_android --parallel
+          } >"$RUNNER_TEMP/vortex-private-logs/android-arm32.log" 2>&1
+
+      - name: Android ARM64 native shell
+        run: |
+          {
+            cmake -S android/app/src/main/cpp -B build-android-arm64-v8a -DCMAKE_BUILD_TYPE=Debug -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_LATEST_HOME/build/cmake/android.toolchain.cmake" -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-26 -DVORTEX_BUILD_TESTS=OFF -DVORTEX_WARNINGS_AS_ERRORS=ON -DVORTEX_EXPECT_POINTER_BITS=64
+            cmake --build build-android-arm64-v8a --target vortex_android --parallel
+          } >"$RUNNER_TEMP/vortex-private-logs/android-arm64.log" 2>&1
+
+      - name: Build split and universal debug APKs
+        run: gradle -p android :app:assembleDebug --no-daemon >"$RUNNER_TEMP/vortex-private-logs/android-apk-build.log" 2>&1
+
+      - name: Verify APKs
+        run: |
+          python3 tools/diagnostics/apk_verify.py --input-dir android/app/build/outputs/apk/debug --output-dir apk-artifacts --manifest apk-artifacts/apk-manifest.json >"$RUNNER_TEMP/vortex-private-logs/apk-verify.log" 2>&1
+
+      - name: Performance smoke
+        run: |
+          {
+            cmake -S . -B build-bench -DCMAKE_BUILD_TYPE=Release -DVORTEX_BUILD_TESTS=OFF -DVORTEX_BUILD_BENCHMARKS=ON -DVORTEX_WARNINGS_AS_ERRORS=ON
+            cmake --build build-bench --target vortex_mesh_bench vortex_eval_bench --parallel
+            ./build-bench/vortex_mesh_bench --smoke --output benchmark-smoke.json
+            ./build-bench/vortex_eval_bench --smoke --output evaluation-benchmark-smoke.json
+          } >"$RUNNER_TEMP/vortex-private-logs/performance-smoke.log" 2>&1
+
+      - name: Build private verification bundle
+        run: |
+          set -euo pipefail
+          mkdir -p verification-input/validation verification-input/vss verification-input/apks verification-input/benchmarks verification-input/logs verification-bundle
+          cp validation-artifacts/validation-surface.json verification-input/validation/
+          cp vss-artifacts/* verification-input/vss/
+          cp apk-artifacts/* verification-input/apks/
+          cp benchmark-smoke.json evaluation-benchmark-smoke.json verification-input/benchmarks/
+          cp "$RUNNER_TEMP"/vortex-private-logs/*.log verification-input/logs/
+          GITHUB_SHA="$SOURCE_SHA" python3 tools/diagnostics/build_report.py --input-dir verification-input --output-dir verification-bundle >"$RUNNER_TEMP/vortex-private-logs/diagnostics-bundle.log" 2>&1
+          SHORT_SHA="${SOURCE_SHA:0:8}"
+          cp apk-artifacts/*.apk "$RUNNER_TEMP/vortex-output/"
+          cp apk-artifacts/apk-manifest.json verification-bundle/diagnostics.json "$RUNNER_TEMP/vortex-output/"
+          printf 'source_sha=%s\nbuilder_repo=%s\nbuilder_run_id=%s\nmode=full\n' "$SOURCE_SHA" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" > "$RUNNER_TEMP/vortex-output/provenance.txt"
+          (cd verification-input && zip -qr "$RUNNER_TEMP/vortex-output/Vortex3D-verification-${SHORT_SHA}.zip" .)
+
+      - name: Return successful build to private Vortex3D prerelease
+        if: ${{ success() && env.PUBLISH == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.VORTEX_PRIVATE_TOKEN }}
+        run: |
+          set -euo pipefail
+          SHORT_SHA="${SOURCE_SHA:0:8}"
+          TAG="worker-${GITHUB_RUN_ID}-${SHORT_SHA}"
+          gh release create "$TAG" "$RUNNER_TEMP"/vortex-output/* \
+            --repo Arctic403/Vortex3d \
+            --target "$SOURCE_SHA" \
+            --prerelease \
+            --title "Vortex3D worker build ${SHORT_SHA}" \
+            --notes "Vortex3D full verification build produced by public Arctic403/VTXBuilder run ${GITHUB_RUN_ID}. Source ${SOURCE_SHA}. Mode full. No public Actions artifact was uploaded."
+
+      - name: Return private failure diagnostics
+        if: ${{ failure() && env.PUBLISH == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.VORTEX_PRIVATE_TOKEN }}
+        run: |
+          set -euo pipefail
+          SHORT_SHA="${SOURCE_SHA:0:8}"
+          TAG="worker-failed-${GITHUB_RUN_ID}-${SHORT_SHA}"
+          mkdir -p "$RUNNER_TEMP/vortex-output"
+          if compgen -G "$RUNNER_TEMP/vortex-private-logs/*.log" >/dev/null; then
+            (cd "$RUNNER_TEMP/vortex-private-logs" && zip -qr "$RUNNER_TEMP/vortex-output/Vortex3D-worker-failure-${SHORT_SHA}.zip" .)
+            gh release create "$TAG" "$RUNNER_TEMP/vortex-output/Vortex3D-worker-failure-${SHORT_SHA}.zip" \
+              --repo Arctic403/Vortex3d \
+              --target "$SOURCE_SHA" \
+              --prerelease \
+              --title "Vortex3D worker FAILED ${SHORT_SHA}" \
+              --notes "Public VTXBuilder run ${GITHUB_RUN_ID} failed while verifying private Vortex3D source ${SOURCE_SHA}. Mode full. Detailed logs are attached here privately rather than uploaded to the public builder."
+          fi
+
+      - name: Confirm public worker retained no build artifact
+        if: ${{ always() }}
+        run: echo 'VTXBuilder intentionally uses no actions/upload-artifact for private Vortex3D builds.'
+
+  benchmark-build:
+    needs: resolve-vortex-source
+    if: ${{ needs.resolve-vortex-source.outputs.should_build == 'true' && needs.resolve-vortex-source.outputs.mode == 'benchmark' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      SOURCE_SHA: ${{ needs.resolve-vortex-source.outputs.source_sha }}
+      SCALE: ${{ needs.resolve-vortex-source.outputs.scale }}
+      PUBLISH: ${{ needs.resolve-vortex-source.outputs.publish }}
+    steps:
+      - name: Check out exact private Vortex3D commit
+        uses: actions/checkout@v4
+        with:
+          repository: Arctic403/Vortex3d
+          ref: ${{ env.SOURCE_SHA }}
+          token: ${{ secrets.VORTEX_PRIVATE_TOKEN }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Build benchmark privately on public worker
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/vortex-benchmark-output"
+          cmake -S . -B build-bench -DCMAKE_BUILD_TYPE=Release -DVORTEX_BUILD_TESTS=OFF -DVORTEX_BUILD_BENCHMARKS=ON -DVORTEX_WARNINGS_AS_ERRORS=ON >/dev/null
+          cmake --build build-bench --target vortex_mesh_bench vortex_eval_bench --parallel >/dev/null
+          ./build-bench/vortex_mesh_bench --scale "$SCALE" --output "$RUNNER_TEMP/vortex-benchmark-output/benchmark-${SCALE}.json" >/dev/null
+          ./build-bench/vortex_eval_bench --scale "$SCALE" --output "$RUNNER_TEMP/vortex-benchmark-output/evaluation-benchmark-${SCALE}.json" >/dev/null
+          sha256sum "$RUNNER_TEMP"/vortex-benchmark-output/*.json > "$RUNNER_TEMP/vortex-benchmark-output/sha256sums.txt"
+
+      - name: Return benchmark to private Vortex3D prerelease
+        if: ${{ success() && env.PUBLISH == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.VORTEX_PRIVATE_TOKEN }}
+        run: |
+          set -euo pipefail
+          SHORT_SHA="${SOURCE_SHA:0:8}"
+          TAG="benchmark-${GITHUB_RUN_ID}-${SHORT_SHA}-${SCALE}"
+          gh release create "$TAG" "$RUNNER_TEMP"/vortex-benchmark-output/* \
+            --repo Arctic403/Vortex3d \
+            --target "$SOURCE_SHA" \
+            --prerelease \
+            --title "Vortex3D benchmark ${SHORT_SHA} (${SCALE})" \
+            --notes "Benchmark built by public Arctic403/VTXBuilder run ${GITHUB_RUN_ID}. Source ${SOURCE_SHA}. Mode benchmark. Scale ${SCALE}. No public Actions artifact was uploaded."
