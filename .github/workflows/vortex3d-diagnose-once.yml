@@ -18,7 +18,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Arctic403/Vortex3d
-          ref: a461b83b0696b3d767a8565aea75e625ec0e07e1
+          ref: 4351edb26e69a84e389247c18ddb31fe3a88342e
           token: ${{ secrets.VORTEX_PRIVATE_TOKEN }}
           persist-credentials: false
           fetch-depth: 1
@@ -50,7 +50,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          SOURCE_SHA=a461b83b0696b3d767a8565aea75e625ec0e07e1
+          SOURCE_SHA=4351edb26e69a84e389247c18ddb31fe3a88342e
           SHORT_SHA=${SOURCE_SHA:0:8}
           TAG="worker-diagnostic-${GITHUB_RUN_ID}-${SHORT_SHA}"
           LOG="$RUNNER_TEMP/vortex-diagnostic/android-apk-build.log"
