@@ -1,0 +1,59 @@
+name: Repository Generated-Tree Cleanup
+
+on:
+  workflow_call:
+    inputs:
+      paths:
+        description: Newline-delimited repository-relative paths to remove from Git tracking if present
+        required: true
+        type: string
+      commit_message:
+        description: Commit message used when cleanup changes are required
+        required: false
+        default: Remove generated build metadata from repository
+        type: string
+      author_name:
+        description: Git author name
+        required: false
+        default: VTXBuilder Repo Cleanup
+        type: string
+      author_email:
+        description: Git author email
+        required: false
+        default: actions@users.noreply.github.com
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - name: Remove accidentally tracked generated build trees
+        env:
+          VTX_CLEAN_PATHS: ${{ inputs.paths }}
+          VTX_COMMIT_MESSAGE: ${{ inputs.commit_message }}
+          VTX_AUTHOR_NAME: ${{ inputs.author_name }}
+          VTX_AUTHOR_EMAIL: ${{ inputs.author_email }}
+        run: |
+          while IFS= read -r path; do
+            [ -z "$path" ] && continue
+            git rm -r --cached --ignore-unmatch -- "$path"
+          done <<< "$VTX_CLEAN_PATHS"
+
+          if git diff --cached --quiet; then
+            echo "No generated build trees are tracked"
+            exit 0
+          fi
+
+          git config user.name "$VTX_AUTHOR_NAME"
+          git config user.email "$VTX_AUTHOR_EMAIL"
+          git commit -m "$VTX_COMMIT_MESSAGE"
+          git pull --rebase origin "$GITHUB_REF_NAME"
+          git push origin "HEAD:$GITHUB_REF_NAME"
