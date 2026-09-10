@@ -4,46 +4,47 @@
 
 Current pipeline flow:
 
-```
+```text
 Editor
-  -> Build trigger
+  -> manual build trigger
   -> VTXBuilder private build worker
-  -> Validation and verification
-  -> Build artifacts
-  -> Vortex3D output
+  -> exact-SHA verification/build
+  -> private Vortex3D prerelease
 ```
 
-## Verified Features
+## Current Coverage
 
 - End-to-end private build worker
-- Manual build triggering
-- Source revision validation
-- Toolchain validation
-- Build manifest/provenance validation
-- Android artifact generation
-- ARM64 build output
-- ARM32 build output
-- Universal APK output
-- Artifact verification
-- Diagnostics generation
-- VSS validation
+- Manual build triggering only
+- Exact source revision resolution
+- Repository hygiene and portability checks
+- GCC and Clang CTest runs
+- ASan/UBSan coverage
+- clang-tidy static analysis
+- VSS smoke evidence
+- ARM32 native Android build
+- ARM64 native Android build
+- Split and universal APK generation
+- APK verification
+- Performance smoke benchmarks
+- Diagnostics/provenance generation
+- Private prerelease artifact return
 
 ## Future Improvements
 
 ### Build Performance
 
-- Add GitHub Actions caching
-- Cache Gradle dependencies
-- Cache Android SDK/NDK components
-- Cache reusable build dependencies
-- Reduce cold build times
+- Improve cache hit rate for Gradle and reusable dependencies
+- Avoid reinstalling stable worker dependencies where the hosted runner already provides them
+- Measure stage timings and remove redundant work that does not catch a distinct failure class
+- Keep cold-build time visible as a tracked pipeline metric
 
 ### Release Pipeline
 
-- Add signed release builds
-- Add release channels
+- Add signed release builds when distribution requires them
+- Add explicit release channels
 - Add version automation
-- Add release artifact management
+- Improve release artifact management
 
 ### Editor Integration
 
@@ -52,28 +53,28 @@ Editor
 - Artifact status reporting
 - Failure diagnostics viewer
 
-### Verification Improvements
+### Verification Rule
 
-- Expand reproducibility checks
-- Improve artifact signing
-- Add additional validation stages
-- Track build performance metrics
+VTXBuilder owns heavy verification. Vortex3D should expose stable source, CMake/CTest, Android build entry points, and only lightweight maintained source checks.
 
-## Repository Alignment Checklist
+Do not add a second feature registry, validation orchestrator, or documentation-driven gate. Add a new verification stage only when it catches a distinct regression class that existing tests/builds cannot cover.
+
+## Repository Alignment
 
 ### Editor
 
-- Responsible for initiating build requests.
-- Should remain aligned with the VTXBuilder trigger contract.
+- Initiates explicit build requests.
+- Resolves returned artifacts by exact source SHA/client correlation.
 
 ### VTXBuilder
 
-- Source of truth for build orchestration.
-- Owns validation, worker execution, artifacts, and diagnostics.
+- Source of truth for build orchestration and heavy verification.
+- Owns worker execution, diagnostics, provenance, and artifact return.
 
 ### Vortex3D
 
 - Source project consumed by the build pipeline.
-- Must expose build inputs expected by VTXBuilder.
+- Owns product code, canonical CTest coverage, and lightweight source hygiene/portability checks.
+- Owns no GitHub Actions workflows.
 
-All three repositories should be kept aligned with this contract.
+All three repositories should stay aligned with this contract.
