@@ -69,11 +69,10 @@ echo "Building private Vortex3D $SOURCE_SHA for client ${CLIENT_ID:-unknown}"
 
 bootstrap_deps
 
+# VTXBuilder owns heavy verification. Keep source-repo coupling limited to stable,
+# maintained checks and build/test entry points.
 run_logged repository-policy python3 scripts/check_repository_policy.py
 run_logged portable-boundary python3 scripts/check_core_portability.py
-
-mkdir -p validation-artifacts
-run_logged validation-coverage python3 scripts/check_validation_surface.py --out validation-artifacts/validation-surface.json
 
 export CXX=g++
 run_logged linux-gcc bash -lc '
@@ -141,9 +140,8 @@ run_logged performance-smoke bash -lc '
   ./build-bench/vortex_eval_bench --smoke --output evaluation-benchmark-smoke.json
 '
 
-mkdir -p verification-input/validation verification-input/vss verification-input/apks \
+mkdir -p verification-input/vss verification-input/apks \
   verification-input/benchmarks verification-input/logs verification-bundle
-cp validation-artifacts/validation-surface.json verification-input/validation/
 cp vss-artifacts/* verification-input/vss/
 cp apk-artifacts/* verification-input/apks/
 cp benchmark-smoke.json evaluation-benchmark-smoke.json verification-input/benchmarks/
