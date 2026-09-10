@@ -79,7 +79,7 @@ jobs:
     needs: resolve-vortex-source
     if: ${{ needs.resolve-vortex-source.outputs.mode == 'full' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 45
     env:
       SOURCE_SHA: ${{ needs.resolve-vortex-source.outputs.source_sha }}
       PUBLISH: ${{ needs.resolve-vortex-source.outputs.publish }}
@@ -111,8 +111,8 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Run full private verification
-        timeout-minutes: 80
+      - name: Build Vortex3D Android artifacts
+        timeout-minutes: 40
         run: bash worker/scripts/vortex3d-full.sh source
 
       - name: Create Vortex3D artifact manifest
@@ -145,7 +145,7 @@ jobs:
             --target "$SOURCE_SHA" \
             --prerelease \
             --title "Vortex3D worker build ${SHORT_SHA}" \
-            --notes "Vortex3D full verification build produced by public Arctic403/VTXBuilder run ${GITHUB_RUN_ID}. Source ${SOURCE_SHA}. Mode full. Client ${CLIENT_ID}. Artifacts are published only through the private Vortex3D prerelease channel."
+            --notes "Vortex3D Android artifact build produced by public Arctic403/VTXBuilder run ${GITHUB_RUN_ID}. Source ${SOURCE_SHA}. Mode full. Client ${CLIENT_ID}. Detailed subsystem validation belongs to Vortex3D. Artifacts are published only through the private Vortex3D prerelease channel."
 
       - name: Return private failure diagnostics
         if: ${{ failure() && env.PUBLISH == 'true' }}
@@ -163,7 +163,7 @@ jobs:
             --target "$SOURCE_SHA" \
             --prerelease \
             --title "Vortex3D worker FAILED ${SHORT_SHA}" \
-            --notes "Public VTXBuilder run ${GITHUB_RUN_ID} failed while verifying private Vortex3D source ${SOURCE_SHA}. Mode full. Client ${CLIENT_ID}. Detailed logs are attached privately."
+            --notes "Public VTXBuilder run ${GITHUB_RUN_ID} failed while building private Vortex3D source ${SOURCE_SHA}. Mode full. Client ${CLIENT_ID}. Detailed logs are attached privately."
 
       - name: Confirm public worker retained no build artifact
         if: ${{ always() }}
