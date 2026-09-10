@@ -7,37 +7,52 @@ Current pipeline flow:
 ```text
 Editor
   -> manual build trigger
-  -> VTXBuilder private build worker
-  -> exact-SHA verification/build
+  -> VTXBuilder Android build worker
+  -> exact-SHA build
   -> private Vortex3D prerelease
 ```
 
-## Current Coverage
+## Current Worker Responsibilities
 
 - End-to-end private build worker
 - Manual build triggering only
 - Exact source revision resolution
-- Repository hygiene and portability checks
-- GCC and Clang CTest runs
-- ASan/UBSan coverage
-- clang-tidy static analysis
-- VSS smoke evidence
-- ARM32 native Android build
-- ARM64 native Android build
+- Fast repository hygiene and portability checks
+- One Gradle/CMake Android build path
+- ARM32 output through the Vortex3D Android configuration
+- ARM64 output through the Vortex3D Android configuration
 - Split and universal APK generation
 - APK verification
-- Performance smoke benchmarks
-- Diagnostics/provenance generation
+- Provenance generation
 - Private prerelease artifact return
+
+## Validation Ownership
+
+VTXBuilder is **not** a second validation framework.
+
+Detailed engine, subsystem, renderer, JNI, Android runtime, and UI validation/diagnostics belong to Vortex3D. The normal VTXBuilder build must not repeat those suites through separate compiler matrices or duplicate native rebuilds.
+
+Removed from the normal build path:
+
+- duplicate GCC + Clang CTest builds
+- ASan/UBSan rebuild
+- clang-tidy rebuild
+- VSS rebuild
+- explicit duplicate ARM32 native build
+- explicit duplicate ARM64 native build
+- performance smoke build
+- verification-input bundle assembly
+
+Benchmark mode remains separate and opt-in because benchmarks answer a different question from artifact generation.
 
 ## Future Improvements
 
 ### Build Performance
 
-- Improve cache hit rate for Gradle and reusable dependencies
-- Avoid reinstalling stable worker dependencies where the hosted runner already provides them
-- Measure stage timings and remove redundant work that does not catch a distinct failure class
-- Keep cold-build time visible as a tracked pipeline metric
+- Improve Gradle and native build cache hit rate
+- Avoid reinstalling stable worker dependencies when already available
+- Track the duration of the single Android build path
+- Keep normal build work limited to tasks required to produce and verify installable APKs
 
 ### Release Pipeline
 
@@ -53,12 +68,6 @@ Editor
 - Artifact status reporting
 - Failure diagnostics viewer
 
-### Verification Rule
-
-VTXBuilder owns heavy verification. Vortex3D should expose stable source, CMake/CTest, Android build entry points, and only lightweight maintained source checks.
-
-Do not add a second feature registry, validation orchestrator, or documentation-driven gate. Add a new verification stage only when it catches a distinct regression class that existing tests/builds cannot cover.
-
 ## Repository Alignment
 
 ### Editor
@@ -68,13 +77,13 @@ Do not add a second feature registry, validation orchestrator, or documentation-
 
 ### VTXBuilder
 
-- Source of truth for build orchestration and heavy verification.
-- Owns worker execution, diagnostics, provenance, and artifact return.
+- Owns build orchestration, APK verification, provenance, and artifact return.
+- Does not own Vortex3D subsystem validation logic.
 
 ### Vortex3D
 
-- Source project consumed by the build pipeline.
-- Owns product code, canonical CTest coverage, and lightweight source hygiene/portability checks.
+- Owns product code and all detailed system/subsystem/UI validation and diagnostics.
+- Exposes the Android build configuration consumed by VTXBuilder.
 - Owns no GitHub Actions workflows.
 
 All three repositories should stay aligned with this contract.
