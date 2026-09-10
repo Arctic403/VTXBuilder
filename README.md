@@ -4,7 +4,7 @@ Public build-worker infrastructure for VTX/Vortex projects.
 
 ## Vortex3D local-controller model
 
-Vortex3D is private. VTXBuilder is public and owns the GitHub Actions runner used for verification, Android builds, and benchmarks.
+Vortex3D is private. VTXBuilder is public and owns the GitHub Actions runner used to build Android artifacts and optional benchmarks.
 
 Vortex3D itself intentionally has **zero GitHub Actions workflows**. Pushing Vortex3D source does not start a build. The supported controller is the local/browser `Arctic403/Editor` workspace:
 
@@ -19,15 +19,11 @@ Vortex3D (private source only, zero Actions)
   v
 VTXBuilder (public Actions run)
   checkout exact private SHA
-  repository policy + portability checks
-  GCC + Clang CTest
-  ASan/UBSan + clang-tidy
-  VSS smoke evidence
-  Android ARM32 + ARM64 native builds
+  fast repository hygiene + portability checks
+  one Gradle/CMake Android build
   split + universal debug APKs
   APK verification
-  performance smoke
-  verification bundle
+  provenance
   |
   | private prerelease tagged with source SHA + client id
   v
@@ -40,7 +36,7 @@ Local device
 
 The worker is **manual/local-controller triggered only**. There is no Vortex3D `repository_dispatch` workflow and no watcher.
 
-VTXBuilder intentionally uses **no `actions/upload-artifact`** for private Vortex3D worker builds. Successful APKs, verification data, benchmark outputs, and captured detailed build logs are returned only to the private Vortex3D repository. Public workflow logs remain public, so private build output is redirected where practical and detailed diagnostics are returned through private prereleases.
+VTXBuilder intentionally uses **no `actions/upload-artifact`** for private Vortex3D worker builds. Successful APKs and build metadata are returned only to the private Vortex3D repository. Public workflow logs remain public, so detailed failure logs are captured and returned through private prereleases where practical.
 
 ### Required credentials
 
@@ -65,6 +61,8 @@ Vortex3D does not need a dispatch token because it never dispatches or runs an A
 - `scale` — benchmark scale when relevant.
 - `publish` — return outputs to private Vortex3D releases.
 
-`full` mode performs the complete Vortex3D verification/APK pipeline. CTest is the canonical native correctness gate. VTXBuilder adds independent compiler, sanitizer, static-analysis, Android ABI, APK, VSS, benchmark, diagnostics, and provenance checks without depending on a second Vortex3D validation registry.
+`full` mode is intentionally lean. VTXBuilder no longer duplicates Vortex3D's subsystem validation with GCC/Clang matrices, sanitizer rebuilds, clang-tidy rebuilds, VSS rebuilds, explicit duplicate ABI builds, performance smoke passes, or verification bundles. Detailed system/subsystem/UI validation and diagnostics live with Vortex3D itself.
+
+The normal worker path now performs only fast source hygiene/portability checks, one Gradle/CMake Android build using the ABIs configured by Vortex3D, APK verification, and provenance generation. Benchmark mode remains separate and opt-in.
 
 VTXBuilder contains build orchestration only. Vortex3D product source is checked out ephemerally onto GitHub-hosted workers and is never committed or uploaded as a public VTXBuilder artifact.
